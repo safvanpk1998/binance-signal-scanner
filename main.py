@@ -1,6 +1,6 @@
 import streamlit as st
-from binance.client import Client
 import os
+from binance.client import Client
 import pandas as pd
 import ta
 import numpy as np
