@@ -174,7 +174,8 @@ for i, symbol in enumerate(symbols):
             buy_now.append(result)
         elif result["Signal"] == "Get Ready to Buy":
             get_ready.append(result)
-        if result["SurgeScore"] >= 6:
+        # ✅ Fix: Ensure SurgeScore exists and is numeric
+        if "SurgeScore" in result and isinstance(result["SurgeScore"], (int, float)) and result["SurgeScore"] >= 6:
             surge_potential.append(result)
     progress.progress((i + 1) / len(symbols))
 
