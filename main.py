@@ -1,11 +1,15 @@
 import streamlit as st
 from binance.client import Client
+import os
 import pandas as pd
 import ta
 import numpy as np
 
 # Binance API (no keys needed for public data)
-client = Client()
+api_key = st.secrets["BINANCE_API_KEY"]
+api_secret = st.secrets["BINANCE_API_SECRET"]
+
+client = Client(api_key, api_secret)
 
 st.set_page_config(page_title="Binance Signal Scanner", layout="wide")
 st.title("📊 Binance Signal Scanner")
