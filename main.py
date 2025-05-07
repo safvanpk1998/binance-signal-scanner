@@ -59,6 +59,7 @@ def analyze(symbol):
     reasons = []
     score = 0
     surge_score = 0
+    momentum_status = "Neutral"
 
     close_1h = df_1h['close']
     volume_1h = df_1h['volume']
@@ -70,6 +71,8 @@ def analyze(symbol):
     macd_1h = ta.trend.MACD(close_1h)
     macd_val_1h = macd_1h.macd().iloc[-1]
     macd_signal_1h = macd_1h.macd_signal().iloc[-1]
+    macd_hist_1h = macd_1h.macd_diff().iloc[-1]
+    macd_hist_prev_1h = macd_1h.macd_diff().iloc[-2]
 
     rsi_1h = ta.momentum.RSIIndicator(close_1h).rsi().iloc[-1]
     stoch_rsi_1h = ta.momentum.StochRSIIndicator(close_1h).stochrsi_k().iloc[-1]
@@ -82,6 +85,7 @@ def analyze(symbol):
     stoch_rsi_1m = ta.momentum.StochRSIIndicator(close_1m).stochrsi_k().iloc[-1]
 
     obv = ta.volume.OnBalanceVolumeIndicator(close_1h, volume_1h).on_balance_volume().iloc[-1]
+    obv_prev = ta.volume.OnBalanceVolumeIndicator(close_1h, volume_1h).on_balance_volume().iloc[-2]
 
     sar = ta.trend.PSARIndicator(df_4h['high'], df_4h['low'], df_4h['close']).psar().iloc[-1]
     last_close_4h = df_4h['close'].iloc[-1]
@@ -95,6 +99,7 @@ def analyze(symbol):
     swing_levels = get_resistance_levels(df_4h)
     tp_levels = sorted(set(swing_levels + fib_levels))[:3]
 
+    # Scoring logic
     if close_1h.iloc[-1] > ema20_1h and ema20_1h > ema50_1h:
         score += 2
         surge_score += 1
@@ -141,6 +146,12 @@ def analyze(symbol):
         surge_score += 1
         reasons.append("OBV confirms demand")
 
+    # Momentum weakening or building
+    if macd_hist_1h < macd_hist_prev_1h or obv < obv_prev:
+        momentum_status = "Weakening"
+    elif macd_hist_1h > macd_hist_prev_1h and rsi_1h > 45 and stoch_rsi_1h > 30 and obv > obv_prev:
+        momentum_status = "Building"
+
     if score >= 7:
         signal_type = "Buy Now"
     elif score >= 5:
@@ -157,13 +168,16 @@ def analyze(symbol):
         "TP1": tp_levels[0] if len(tp_levels) > 0 else "-",
         "TP2": tp_levels[1] if len(tp_levels) > 1 else "-",
         "TP3": tp_levels[2] if len(tp_levels) > 2 else "-",
-        "Reasons": ", ".join(reasons)
+        "Reasons": ", ".join(reasons),
+        "Momentum": momentum_status
     }
 
 symbols = get_usdt_pairs()
 buy_now = []
 get_ready = []
 surge_potential = []
+momentum_weak = []
+momentum_building = []
 progress = st.progress(0)
 
 for i, symbol in enumerate(symbols):
@@ -173,18 +187,19 @@ for i, symbol in enumerate(symbols):
             buy_now.append(result)
         elif result["Signal"] == "Get Ready to Buy":
             get_ready.append(result)
-        if result.get("SurgeScore", 0) >= 6:
+        if result["SurgeScore"] >= 6:
             surge_potential.append(result)
+        if result["Momentum"] == "Weakening":
+            momentum_weak.append(result)
+        elif result["Momentum"] == "Building":
+            momentum_building.append(result)
     progress.progress((i + 1) / len(symbols))
 
 buy_now_df = pd.DataFrame(buy_now).sort_values("Score", ascending=False).head(10)
 get_ready_df = pd.DataFrame(get_ready).sort_values("Score", ascending=False).head(10)
-
-# Safe check for SurgeScore column
-surge_df_raw = [x for x in surge_potential if "SurgeScore" in x]
-surge_df = pd.DataFrame(surge_df_raw)
-if not surge_df.empty:
-    surge_df = surge_df.sort_values("SurgeScore", ascending=False).head(10)
+surge_df = pd.DataFrame(surge_potential).sort_values("SurgeScore", ascending=False).head(10)
+momentum_weak_df = pd.DataFrame(momentum_weak).sort_values("Score", ascending=False).head(10)
+momentum_building_df = pd.DataFrame(momentum_building).sort_values("Score", ascending=False).head(10)
 
 st.subheader("🟢 Top 10 Buy Now")
 if not buy_now_df.empty:
@@ -204,4 +219,16 @@ if not surge_df.empty:
 else:
     st.info("No Surge Potential signals.")
 
-st.caption("Strategy includes EMA, MACD, RSI, Stoch RSI, OBV, SAR, Volume, Fib levels, Surge Detection")
+st.subheader("🔻 Momentum Weakening")
+if not momentum_weak_df.empty:
+    st.dataframe(momentum_weak_df, use_container_width=True)
+else:
+    st.info("No signs of weakening momentum.")
+
+st.subheader("📈 Momentum Building")
+if not momentum_building_df.empty:
+    st.dataframe(momentum_building_df, use_container_width=True)
+else:
+    st.info("No signs of increasing momentum.")
+
+st.caption("Strategy includes EMA, MACD, RSI, Stoch RSI, OBV, SAR, Volume, Fib levels, Surge & Momentum Detection")
