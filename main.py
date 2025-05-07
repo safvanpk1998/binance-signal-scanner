@@ -1,6 +1,5 @@
 import streamlit as st
 from binance.client import Client
-import os
 import pandas as pd
 import ta
 import numpy as np
@@ -174,14 +173,18 @@ for i, symbol in enumerate(symbols):
             buy_now.append(result)
         elif result["Signal"] == "Get Ready to Buy":
             get_ready.append(result)
-        # ✅ Fix: Ensure SurgeScore exists and is numeric
-        if "SurgeScore" in result and isinstance(result["SurgeScore"], (int, float)) and result["SurgeScore"] >= 6:
+        if result.get("SurgeScore", 0) >= 6:
             surge_potential.append(result)
     progress.progress((i + 1) / len(symbols))
 
 buy_now_df = pd.DataFrame(buy_now).sort_values("Score", ascending=False).head(10)
 get_ready_df = pd.DataFrame(get_ready).sort_values("Score", ascending=False).head(10)
-surge_df = pd.DataFrame(surge_potential).sort_values("SurgeScore", ascending=False).head(10)
+
+# Safe check for SurgeScore column
+surge_df_raw = [x for x in surge_potential if "SurgeScore" in x]
+surge_df = pd.DataFrame(surge_df_raw)
+if not surge_df.empty:
+    surge_df = surge_df.sort_values("SurgeScore", ascending=False).head(10)
 
 st.subheader("🟢 Top 10 Buy Now")
 if not buy_now_df.empty:
