@@ -4,7 +4,7 @@ import pandas as pd
 import ta
 import numpy as np
 
-# Binance API (no keys needed for public data)
+# Binance API (public)
 client = Client()
 
 st.set_page_config(page_title="Binance Signal Scanner", layout="wide")
@@ -99,7 +99,6 @@ def analyze(symbol):
     swing_levels = get_resistance_levels(df_4h)
     tp_levels = sorted(set(swing_levels + fib_levels))[:3]
 
-    # Scoring logic
     if close_1h.iloc[-1] > ema20_1h and ema20_1h > ema50_1h:
         score += 2
         surge_score += 1
@@ -146,7 +145,6 @@ def analyze(symbol):
         surge_score += 1
         reasons.append("OBV confirms demand")
 
-    # Momentum weakening or building
     if macd_hist_1h < macd_hist_prev_1h or obv < obv_prev:
         momentum_status = "Weakening"
     elif macd_hist_1h > macd_hist_prev_1h and rsi_1h > 45 and stoch_rsi_1h > 30 and obv > obv_prev:
@@ -195,40 +193,41 @@ for i, symbol in enumerate(symbols):
             momentum_building.append(result)
     progress.progress((i + 1) / len(symbols))
 
-buy_now_df = pd.DataFrame(buy_now).sort_values("Score", ascending=False).head(10)
-get_ready_df = pd.DataFrame(get_ready).sort_values("Score", ascending=False).head(10)
-surge_df = pd.DataFrame(surge_potential).sort_values("SurgeScore", ascending=False).head(10)
-momentum_weak_df = pd.DataFrame(momentum_weak).sort_values("Score", ascending=False).head(10)
-momentum_building_df = pd.DataFrame(momentum_building).sort_values("Score", ascending=False).head(10)
-
-st.subheader("🟢 Top 10 Buy Now")
+# DataFrames with checks
+buy_now_df = pd.DataFrame(buy_now)
 if not buy_now_df.empty:
-    st.dataframe(buy_now_df, use_container_width=True)
-else:
-    st.info("No Buy Now signals.")
+    buy_now_df = buy_now_df.sort_values("Score", ascending=False).head(10)
+
+get_ready_df = pd.DataFrame(get_ready)
+if not get_ready_df.empty:
+    get_ready_df = get_ready_df.sort_values("Score", ascending=False).head(10)
+
+surge_df = pd.DataFrame(surge_potential)
+if not surge_df.empty and "SurgeScore" in surge_df.columns:
+    surge_df = surge_df.sort_values("SurgeScore", ascending=False).head(10)
+
+momentum_weak_df = pd.DataFrame(momentum_weak)
+if not momentum_weak_df.empty:
+    momentum_weak_df = momentum_weak_df.sort_values("Score", ascending=False).head(10)
+
+momentum_building_df = pd.DataFrame(momentum_building)
+if not momentum_building_df.empty:
+    momentum_building_df = momentum_building_df.sort_values("Score", ascending=False).head(10)
+
+# Display
+st.subheader("🟢 Top 10 Buy Now")
+st.dataframe(buy_now_df if not buy_now_df.empty else pd.DataFrame(), use_container_width=True)
 
 st.subheader("🟡 Top 10 Get Ready to Buy")
-if not get_ready_df.empty:
-    st.dataframe(get_ready_df, use_container_width=True)
-else:
-    st.info("No Get Ready signals.")
+st.dataframe(get_ready_df if not get_ready_df.empty else pd.DataFrame(), use_container_width=True)
 
 st.subheader("🔺 Top 10 Surge Potential")
-if not surge_df.empty:
-    st.dataframe(surge_df, use_container_width=True)
-else:
-    st.info("No Surge Potential signals.")
+st.dataframe(surge_df if not surge_df.empty else pd.DataFrame(), use_container_width=True)
 
 st.subheader("🔻 Momentum Weakening")
-if not momentum_weak_df.empty:
-    st.dataframe(momentum_weak_df, use_container_width=True)
-else:
-    st.info("No signs of weakening momentum.")
+st.dataframe(momentum_weak_df if not momentum_weak_df.empty else pd.DataFrame(), use_container_width=True)
 
 st.subheader("📈 Momentum Building")
-if not momentum_building_df.empty:
-    st.dataframe(momentum_building_df, use_container_width=True)
-else:
-    st.info("No signs of increasing momentum.")
+st.dataframe(momentum_building_df if not momentum_building_df.empty else pd.DataFrame(), use_container_width=True)
 
 st.caption("Strategy includes EMA, MACD, RSI, Stoch RSI, OBV, SAR, Volume, Fib levels, Surge & Momentum Detection")
