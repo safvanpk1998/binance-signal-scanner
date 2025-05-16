@@ -2,27 +2,38 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator, MACD
-from ta.volatility import AverageTrueRange, BollingerBands
+from ta.momentum import RSIIndicator
 from ta.volume import OnBalanceVolumeIndicator
+from ta.volatility import AverageTrueRange, BollingerBands
 from datetime import datetime
 
 st.set_page_config(layout="wide")
-st.title("📉 Binance Buy the Dip Scanner with Advanced Filters")
+st.title("🔻 Dip Buy Signal Scanner - All Binance USDT Pairs")
 
 @st.cache_data(ttl=300)
-def get_binance_top_symbols():
+def get_all_usdt_pairs():
+    url = "https://api.binance.com/api/v3/ticker/24hr"
+    data = requests.get(url).json()
+    # Exclude BUSD and other stablecoins, keep only USDT pairs
+    pairs = [item['symbol'] for item in data if item['symbol'].endswith('USDT') and not item['symbol'].endswith('BUSD')]
+    return pairs
+
+@st.cache_data(ttl=300)
+def get_binance_top_100_usdt_pairs():
     url = "https://api.binance.com/api/v3/ticker/24hr"
     data = requests.get(url).json()
     usdt_pairs = [item for item in data if item['symbol'].endswith('USDT') and not item['symbol'].endswith('BUSD')]
     sorted_by_volume = sorted(usdt_pairs, key=lambda x: float(x['quoteVolume']), reverse=True)
-    return [item['symbol'] for item in sorted_by_volume]
+    return [item['symbol'] for item in sorted_by_volume[:100]]
 
 @st.cache_data(ttl=300)
 def get_klines(symbol, interval, limit=100):
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     data = requests.get(url).json()
+    if not isinstance(data, list) or len(data) < 20:
+        # Not enough data or bad response
+        return None
     df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume", "close_time",
                                      "quote_asset_volume", "number_of_trades", "taker_buy_base",
                                      "taker_buy_quote", "ignore"])
@@ -37,124 +48,108 @@ def calculate_indicators(df):
     low = df['low']
     volume = df['volume']
 
-    df['rsi'] = RSIIndicator(close, window=14).rsi()
     df['ema20'] = EMAIndicator(close, window=20).ema_indicator()
     df['ema50'] = EMAIndicator(close, window=50).ema_indicator()
-    macd = MACD(close)
-    df['macd'] = macd.macd()
-    df['macd_signal'] = macd.macd_signal()
-    df['atr'] = AverageTrueRange(high, low, close).average_true_range()
+    df['macd'] = MACD(close).macd()
+    df['macd_signal'] = MACD(close).macd_signal()
+    df['rsi'] = RSIIndicator(close, window=14).rsi()
+    df['obv'] = OnBalanceVolumeIndicator(close, volume).on_balance_volume()
+    df['atr'] = AverageTrueRange(high, low, close, window=14).average_true_range()
     bb = BollingerBands(close, window=20, window_dev=2)
     df['bb_lower'] = bb.bollinger_lband()
-    df['obv'] = OnBalanceVolumeIndicator(close, volume).on_balance_volume()
     return df
 
-def get_btc_trend():
-    symbol = 'BTCUSDT'
-    df_btc = get_klines(symbol, '1h', 100)
-    df_btc = calculate_indicators(df_btc)
-    latest = df_btc.iloc[-1]
-    # BTC trend is up if EMA20 > EMA50 and MACD > signal line
-    btc_trend_up = (latest['ema20'] > latest['ema50']) and (latest['macd'] > latest['macd_signal'])
-    return btc_trend_up
-
-def detect_signals(symbol, interval):
-    df = get_klines(symbol, interval, 100)
-    df = calculate_indicators(df)
+def dip_buy_signal(df):
+    # Signal logic for buy dip opportunity
     latest = df.iloc[-1]
-    # Dip buy logic:
-    # 1. RSI below 30 (oversold)
-    # 2. Close price near or below Bollinger lower band
-    # 3. OBV rising (confirm volume)
-    # 4. BTC trend up filter
-    # 5. MACD histogram rising (momentum picking up)
 
-    # Calculate OBV slope: compare last OBV with OBV 5 periods ago
-    obv_slope = latest['obv'] - df['obv'].iloc[-6]
+    # Conditions:
+    # - Price near or below Bollinger lower band (within 1% below)
+    # - RSI below 40 (indicates oversold)
+    # - MACD histogram rising or crossing zero (MACD > MACD signal)
+    # - OBV increasing (current OBV > previous OBV)
+    price = latest['close']
+    bb_lower = latest['bb_lower']
+    rsi = latest['rsi']
+    macd = latest['macd']
+    macd_signal = latest['macd_signal']
+    obv = latest['obv']
+    obv_prev = df['obv'].iloc[-2] if len(df) > 1 else obv
 
-    btc_trend_up = get_btc_trend()
+    price_near_bb_lower = price <= bb_lower * 1.01  # within 1% above lower band
+    rsi_ok = rsi < 40
+    macd_ok = macd > macd_signal
+    obv_ok = obv > obv_prev
 
-    macd_hist = latest['macd'] - latest['macd_signal']
+    if all([price_near_bb_lower, rsi_ok, macd_ok, obv_ok]):
+        return True, rsi, "Buy Dip Signal (Price near BB lower band, low RSI, rising MACD & OBV)"
+    else:
+        return False, rsi, ""
 
-    if (latest['rsi'] < 30 and
-        latest['close'] <= latest['bb_lower'] * 1.01 and  # close near/below lower band (1% tolerance)
-        obv_slope > 0 and
-        btc_trend_up and
-        macd_hist > 0):
-        price = latest['close']
-        atr = latest['atr']
-        tp1 = round(price + atr * 1.5, 4)
-        sl = round(price - atr * 1.0, 4)
-
-        return {
-            'Symbol': symbol,
-            'Interval': interval,
-            'Price': round(price, 4),
-            'RSI': round(latest['rsi'], 2),
-            'Reason': 'RSI oversold + Near BB lower + OBV rising + BTC trend up + MACD rising',
-            'TP1': tp1,
-            'SL': sl
-        }
-    return None
-
-def get_rsi_less_than_16():
-    symbols = get_binance_top_symbols()[:100]
+def get_signals_for_interval(symbols, interval, max_signals=20):
     signals = []
     progress = st.progress(0)
-    for i, symbol in enumerate(symbols):
-        try:
-            df = get_klines(symbol, '1h', 100)
-            rsi = RSIIndicator(df['close'], window=14).rsi()
-            rsi_val = rsi.iloc[-1]
-            if rsi_val < 16:
-                signals.append({
-                    'Symbol': symbol,
-                    'RSI': round(rsi_val, 2),
-                    'Reason': 'Extreme Oversold RSI < 16'
-                })
-        except:
-            pass
+    for i, sym in enumerate(symbols):
+        df = get_klines(sym, interval, 100)
+        if df is None or len(df) < 20:
+            progress.progress((i + 1) / len(symbols))
+            continue
+        df = calculate_indicators(df)
+        signal_flag, rsi_val, reason = dip_buy_signal(df)
+        if signal_flag:
+            signals.append({
+                "Symbol": sym,
+                "RSI": round(rsi_val, 2),
+                "Reason": reason
+            })
         progress.progress((i + 1) / len(symbols))
-    signals = sorted(signals, key=lambda x: x['RSI'])
-    return signals[:15]
+    # Sort by RSI ascending (lowest RSI first) and limit
+    signals = sorted(signals, key=lambda x: x['RSI'])[:max_signals]
+    return signals
+
+def get_low_rsi_coins():
+    signals = []
+    top_100 = get_binance_top_100_usdt_pairs()
+    progress = st.progress(0)
+    for i, sym in enumerate(top_100):
+        df = get_klines(sym, '1h', 100)
+        if df is None or len(df) < 20:
+            progress.progress((i + 1) / len(top_100))
+            continue
+        rsi = RSIIndicator(df['close'], window=14).rsi()
+        rsi_val = rsi.iloc[-1]
+        if rsi_val < 16:
+            signals.append({
+                "Symbol": sym,
+                "RSI": round(rsi_val, 2),
+                "Reason": "Extreme Oversold (RSI < 16)"
+            })
+        progress.progress((i + 1) / len(top_100))
+    return sorted(signals, key=lambda x: x['RSI'])[:15]
 
 def main():
-    st.subheader("Signals based on 4 Hour Chart")
-    symbols = get_binance_top_symbols()[:50]  # limit scan for speed
-    signals_4h = []
-    progress = st.progress(0)
-    for i, symbol in enumerate(symbols):
-        signal = detect_signals(symbol, '4h')
-        if signal:
-            signals_4h.append(signal)
-        progress.progress((i + 1) / len(symbols))
+    all_usdt_pairs = get_all_usdt_pairs()
+
+    st.header("Signals based on 4H timeframe")
+    signals_4h = get_signals_for_interval(all_usdt_pairs, '4h', max_signals=20)
     if signals_4h:
-        df_4h = pd.DataFrame(signals_4h).sort_values(by='RSI')
-        st.dataframe(df_4h, use_container_width=True)
+        st.dataframe(pd.DataFrame(signals_4h), use_container_width=True)
     else:
         st.info("No buy dip signals found on 4H timeframe.")
 
-    st.subheader("Signals based on 1 Day Chart")
-    signals_1d = []
-    progress = st.progress(0)
-    for i, symbol in enumerate(symbols):
-        signal = detect_signals(symbol, '1d')
-        if signal:
-            signals_1d.append(signal)
-        progress.progress((i + 1) / len(symbols))
+    st.header("Signals based on 1D timeframe")
+    signals_1d = get_signals_for_interval(all_usdt_pairs, '1d', max_signals=20)
     if signals_1d:
-        df_1d = pd.DataFrame(signals_1d).sort_values(by='RSI')
-        st.dataframe(df_1d, use_container_width=True)
+        st.dataframe(pd.DataFrame(signals_1d), use_container_width=True)
     else:
         st.info("No buy dip signals found on 1D timeframe.")
 
-    st.subheader("Top 15 Coins with RSI < 16 (Top 100 Binance USDT Pairs)")
-    rsi_less_16 = get_rsi_less_than_16()
-    if rsi_less_16:
-        df_rsi = pd.DataFrame(rsi_less_16)
-        st.dataframe(df_rsi, use_container_width=True)
+    st.header("Top 15 Lowest RSI Coins in Top 100 Binance USDT pairs (RSI < 16)")
+    low_rsi_coins = get_low_rsi_coins()
+    if low_rsi_coins:
+        st.dataframe(pd.DataFrame(low_rsi_coins), use_container_width=True)
     else:
-        st.info("No coins with RSI < 16 found in top 100.")
+        st.info("No coins with RSI below 16 found in top 100 pairs.")
 
 if __name__ == "__main__":
     main()
