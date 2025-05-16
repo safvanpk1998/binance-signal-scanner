@@ -99,6 +99,7 @@ def analyze(symbol):
     swing_levels = get_resistance_levels(df_4h)
     tp_levels = sorted(set(swing_levels + fib_levels))[:3]
 
+    # Main scoring for Buy Now and Get Ready
     if close_1h.iloc[-1] > ema20_1h and ema20_1h > ema50_1h:
         score += 2
         surge_score += 1
@@ -157,6 +158,17 @@ def analyze(symbol):
     else:
         signal_type = None
 
+    # Buy on Dip Strategy
+    # Conditions: Uptrend EMAs, price dipped below EMA20, Stoch RSI oversold, RSI healthy range
+    dip_signal = False
+    if ema20_1h > ema50_1h > ema100_1h:
+        if close_1h.iloc[-1] < ema20_1h:
+            if (stoch_rsi_1h < 20) and (40 <= rsi_1h <= 60):
+                dip_signal = True
+
+    # RSI 4H for lowest RSI table
+    rsi_4h = ta.momentum.RSIIndicator(df_4h['close']).rsi().iloc[-1]
+
     return {
         "Symbol": symbol,
         "Signal": signal_type,
@@ -167,15 +179,21 @@ def analyze(symbol):
         "TP2": tp_levels[1] if len(tp_levels) > 1 else "-",
         "TP3": tp_levels[2] if len(tp_levels) > 2 else "-",
         "Reasons": ", ".join(reasons),
-        "Momentum": momentum_status
+        "Momentum": momentum_status,
+        "BuyOnDip": dip_signal,
+        "RSI_4H": round(rsi_4h, 2)
     }
 
 symbols = get_usdt_pairs()
+
 buy_now = []
 get_ready = []
 surge_potential = []
 momentum_weak = []
 momentum_building = []
+buy_on_dip = []
+lowest_rsi = []
+
 progress = st.progress(0)
 
 for i, symbol in enumerate(symbols):
@@ -191,30 +209,22 @@ for i, symbol in enumerate(symbols):
             momentum_weak.append(result)
         elif result["Momentum"] == "Building":
             momentum_building.append(result)
+        if result["BuyOnDip"]:
+            buy_on_dip.append(result)
+        # Add all results for RSI sorting
+        lowest_rsi.append(result)
     progress.progress((i + 1) / len(symbols))
 
-# DataFrames with checks
-buy_now_df = pd.DataFrame(buy_now)
-if not buy_now_df.empty:
-    buy_now_df = buy_now_df.sort_values("Score", ascending=False).head(10)
+# DataFrames with sorting and limits
+buy_now_df = pd.DataFrame(buy_now).sort_values("Score", ascending=False).head(10) if buy_now else pd.DataFrame()
+get_ready_df = pd.DataFrame(get_ready).sort_values("Score", ascending=False).head(10) if get_ready else pd.DataFrame()
+surge_df = pd.DataFrame(surge_potential).sort_values("SurgeScore", ascending=False).head(10) if surge_potential else pd.DataFrame()
+momentum_weak_df = pd.DataFrame(momentum_weak).sort_values("Score", ascending=False).head(10) if momentum_weak else pd.DataFrame()
+momentum_building_df = pd.DataFrame(momentum_building).sort_values("Score", ascending=False).head(10) if momentum_building else pd.DataFrame()
+buy_on_dip_df = pd.DataFrame(buy_on_dip).sort_values("RSI_4H", ascending=True).head(10) if buy_on_dip else pd.DataFrame()
+lowest_rsi_df = pd.DataFrame(lowest_rsi).sort_values("RSI_4H", ascending=True).head(15) if lowest_rsi else pd.DataFrame()
 
-get_ready_df = pd.DataFrame(get_ready)
-if not get_ready_df.empty:
-    get_ready_df = get_ready_df.sort_values("Score", ascending=False).head(10)
-
-surge_df = pd.DataFrame(surge_potential)
-if not surge_df.empty and "SurgeScore" in surge_df.columns:
-    surge_df = surge_df.sort_values("SurgeScore", ascending=False).head(10)
-
-momentum_weak_df = pd.DataFrame(momentum_weak)
-if not momentum_weak_df.empty:
-    momentum_weak_df = momentum_weak_df.sort_values("Score", ascending=False).head(10)
-
-momentum_building_df = pd.DataFrame(momentum_building)
-if not momentum_building_df.empty:
-    momentum_building_df = momentum_building_df.sort_values("Score", ascending=False).head(10)
-
-# Display
+# Display tables
 st.subheader("🟢 Top 10 Buy Now")
 st.dataframe(buy_now_df if not buy_now_df.empty else pd.DataFrame(), use_container_width=True)
 
@@ -230,4 +240,10 @@ st.dataframe(momentum_weak_df if not momentum_weak_df.empty else pd.DataFrame(),
 st.subheader("📈 Momentum Building")
 st.dataframe(momentum_building_df if not momentum_building_df.empty else pd.DataFrame(), use_container_width=True)
 
-st.caption("Strategy includes EMA, MACD, RSI, Stoch RSI, OBV, SAR, Volume, Fib levels, Surge & Momentum Detection")
+st.subheader("🔵 Buy on Dip (Uptrend + Oversold)")
+st.dataframe(buy_on_dip_df if not buy_on_dip_df.empty else pd.DataFrame(), use_container_width=True)
+
+st.subheader("⚫ 15 Coins with Lowest RSI (4H timeframe)")
+st.dataframe(lowest_rsi_df if not lowest_rsi_df.empty else pd.DataFrame(), use_container_width=True)
+
+st.caption("Strategy includes EMA, MACD, RSI, Stoch RSI, OBV,
