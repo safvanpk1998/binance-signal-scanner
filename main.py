@@ -4,7 +4,7 @@ import pandas as pd
 import ta
 import numpy as np
 
-# Binance API (public)
+# Initialize Binance client (public)
 client = Client()
 
 st.set_page_config(page_title="Binance Signal Scanner", layout="wide")
@@ -30,7 +30,7 @@ def fetch_klines(symbol, interval, limit=100):
         df['low'] = df['low'].astype(float)
         df['volume'] = df['volume'].astype(float)
         return df
-    except:
+    except Exception:
         return None
 
 def calculate_fibonacci(high, low):
@@ -64,42 +64,48 @@ def analyze(symbol):
     close_1h = df_1h['close']
     volume_1h = df_1h['volume']
 
+    # EMA indicators on 1h
     ema20_1h = ta.trend.EMAIndicator(close_1h, window=20).ema_indicator().iloc[-1]
     ema50_1h = ta.trend.EMAIndicator(close_1h, window=50).ema_indicator().iloc[-1]
     ema100_1h = ta.trend.EMAIndicator(close_1h, window=100).ema_indicator().iloc[-1]
 
+    # MACD on 1h
     macd_1h = ta.trend.MACD(close_1h)
     macd_val_1h = macd_1h.macd().iloc[-1]
     macd_signal_1h = macd_1h.macd_signal().iloc[-1]
     macd_hist_1h = macd_1h.macd_diff().iloc[-1]
     macd_hist_prev_1h = macd_1h.macd_diff().iloc[-2]
 
+    # RSI & Stoch RSI on 1h
     rsi_1h = ta.momentum.RSIIndicator(close_1h).rsi().iloc[-1]
     stoch_rsi_1h = ta.momentum.StochRSIIndicator(close_1h).stochrsi_k().iloc[-1]
 
+    # MACD & Stoch RSI on 1m
     close_1m = df_1m['close']
     macd_1m = ta.trend.MACD(close_1m)
     macd_val_1m = macd_1m.macd().iloc[-1]
     macd_signal_1m = macd_1m.macd_signal().iloc[-1]
-
     stoch_rsi_1m = ta.momentum.StochRSIIndicator(close_1m).stochrsi_k().iloc[-1]
 
+    # OBV and Parabolic SAR on 4h
     obv = ta.volume.OnBalanceVolumeIndicator(close_1h, volume_1h).on_balance_volume().iloc[-1]
     obv_prev = ta.volume.OnBalanceVolumeIndicator(close_1h, volume_1h).on_balance_volume().iloc[-2]
 
     sar = ta.trend.PSARIndicator(df_4h['high'], df_4h['low'], df_4h['close']).psar().iloc[-1]
     last_close_4h = df_4h['close'].iloc[-1]
 
+    # Volume check
     avg_vol = volume_1h[:-1].mean()
     last_vol = volume_1h.iloc[-1]
 
+    # Fibonacci and resistance levels for TP
     high = df_1h['high'].iloc[-20:].max()
     low = df_1h['low'].iloc[-20:].min()
     fib_levels = calculate_fibonacci(high, low)
     swing_levels = get_resistance_levels(df_4h)
     tp_levels = sorted(set(swing_levels + fib_levels))[:3]
 
-    # Main scoring for Buy Now and Get Ready
+    # Scoring Buy Now / Get Ready
     if close_1h.iloc[-1] > ema20_1h and ema20_1h > ema50_1h:
         score += 2
         surge_score += 1
@@ -113,14 +119,14 @@ def analyze(symbol):
     if 40 <= rsi_1h <= 65:
         score += 1
         surge_score += 1
-        reasons.append("RSI in healthy range")
+        reasons.append("RSI healthy range")
     elif rsi_1h > 70:
         score -= 1
         reasons.append("RSI overbought")
 
     if stoch_rsi_1m < 20 or stoch_rsi_1h < 20:
         score += 1
-        reasons.append("Stoch RSI bottoming")
+        reasons.append("Stoch RSI oversold")
     elif stoch_rsi_1m > 85 or stoch_rsi_1h > 85:
         score -= 1
         surge_score += 1
@@ -158,8 +164,7 @@ def analyze(symbol):
     else:
         signal_type = None
 
-    # Buy on Dip Strategy
-    # Conditions: Uptrend EMAs, price dipped below EMA20, Stoch RSI oversold, RSI healthy range
+    # Buy on Dip Strategy: Uptrend EMAs, price dipped below EMA20, Stoch RSI oversold, RSI healthy range
     dip_signal = False
     if ema20_1h > ema50_1h > ema100_1h:
         if close_1h.iloc[-1] < ema20_1h:
@@ -211,39 +216,44 @@ for i, symbol in enumerate(symbols):
             momentum_building.append(result)
         if result["BuyOnDip"]:
             buy_on_dip.append(result)
-        # Add all results for RSI sorting
         lowest_rsi.append(result)
     progress.progress((i + 1) / len(symbols))
 
-# DataFrames with sorting and limits
+# Convert lists to DataFrames
 buy_now_df = pd.DataFrame(buy_now).sort_values("Score", ascending=False).head(10) if buy_now else pd.DataFrame()
 get_ready_df = pd.DataFrame(get_ready).sort_values("Score", ascending=False).head(10) if get_ready else pd.DataFrame()
 surge_df = pd.DataFrame(surge_potential).sort_values("SurgeScore", ascending=False).head(10) if surge_potential else pd.DataFrame()
 momentum_weak_df = pd.DataFrame(momentum_weak).sort_values("Score", ascending=False).head(10) if momentum_weak else pd.DataFrame()
 momentum_building_df = pd.DataFrame(momentum_building).sort_values("Score", ascending=False).head(10) if momentum_building else pd.DataFrame()
-buy_on_dip_df = pd.DataFrame(buy_on_dip).sort_values("RSI_4H", ascending=True).head(10) if buy_on_dip else pd.DataFrame()
-lowest_rsi_df = pd.DataFrame(lowest_rsi).sort_values("RSI_4H", ascending=True).head(15) if lowest_rsi else pd.DataFrame()
+
+# Buy on Dip: Filter those with BuyOnDip == True and sort by RSI_4H ascending (lowest RSI on 4H)
+buy_on_dip_df = pd.DataFrame(buy_on_dip)
+if not buy_on_dip_df.empty:
+    buy_on_dip_df = buy_on_dip_df.sort_values("RSI_4H").head(15)
+
+# Lowest RSI 4H: Sort all coins by RSI_4H ascending and pick lowest 15
+lowest_rsi_df = pd.DataFrame(lowest_rsi)
+if not lowest_rsi_df.empty:
+    lowest_rsi_df = lowest_rsi_df.sort_values("RSI_4H").head(15)
 
 # Display tables
-st.subheader("🟢 Top 10 Buy Now")
+st.subheader("🔥 Buy Now Signals")
 st.dataframe(buy_now_df if not buy_now_df.empty else pd.DataFrame(), use_container_width=True)
 
-st.subheader("🟡 Top 10 Get Ready to Buy")
+st.subheader("⏳ Get Ready to Buy Signals")
 st.dataframe(get_ready_df if not get_ready_df.empty else pd.DataFrame(), use_container_width=True)
 
-st.subheader("🔺 Top 10 Surge Potential")
+st.subheader("🚀 Surge Potential")
 st.dataframe(surge_df if not surge_df.empty else pd.DataFrame(), use_container_width=True)
 
-st.subheader("🔻 Momentum Weakening")
+st.subheader("📉 Momentum Weakening")
 st.dataframe(momentum_weak_df if not momentum_weak_df.empty else pd.DataFrame(), use_container_width=True)
 
 st.subheader("📈 Momentum Building")
 st.dataframe(momentum_building_df if not momentum_building_df.empty else pd.DataFrame(), use_container_width=True)
 
-st.subheader("🔵 Buy on Dip (Uptrend + Oversold)")
+st.subheader("📉 Buy On Dip (Lowest RSI in 4H)")
 st.dataframe(buy_on_dip_df if not buy_on_dip_df.empty else pd.DataFrame(), use_container_width=True)
 
-st.subheader("⚫ 15 Coins with Lowest RSI (4H timeframe)")
+st.subheader("📉 Lowest RSI (4 Hour Timeframe)")
 st.dataframe(lowest_rsi_df if not lowest_rsi_df.empty else pd.DataFrame(), use_container_width=True)
-
-st.caption("Strategy includes EMA, MACD, RSI, Stoch RSI, OBV,
