@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-from ta.momentum import RSIIndicator, MACD
-from ta.trend import EMAIndicator
+from ta.momentum import RSIIndicator
+from ta.trend import EMAIndicator, MACD
 from ta.volatility import BollingerBands, AverageTrueRange
 from ta.volume import OnBalanceVolumeIndicator
 from datetime import datetime
@@ -42,13 +42,13 @@ def evaluate_dip_strategy(symbol, interval):
         volume = df['volume']
 
         rsi = RSIIndicator(close).rsi().iloc[-1]
-        macd = MACD(close).macd_diff().iloc[-3:]
+        macd_diff = MACD(close).macd_diff().iloc[-3:]
         bb = BollingerBands(close)
         price_below_bb = close.iloc[-1] < bb.bollinger_lband().iloc[-1]
         obv = OnBalanceVolumeIndicator(close, volume).on_balance_volume().diff().iloc[-1]
         atr = AverageTrueRange(high, low, close).average_true_range().iloc[-1]
 
-        if rsi < 30 and macd.iloc[-1] > macd.iloc[-2] > macd.iloc[-3] and price_below_bb and obv > 0:
+        if rsi < 30 and macd_diff.iloc[-1] > macd_diff.iloc[-2] > macd_diff.iloc[-3] and price_below_bb and obv > 0:
             return {
                 "Symbol": symbol,
                 "RSI": round(rsi, 2),
